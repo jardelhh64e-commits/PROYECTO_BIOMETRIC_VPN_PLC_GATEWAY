@@ -1,141 +1,130 @@
-# ZeroTier Gateway Control
+# PROYECTO_BIOMETRIC_VPN_PLC_GATEWAY
 
-Servidor HTTP con autenticación HMAC-SHA256 que controla el reenvío de tráfico (NAT/iptables) entre la red ZeroTier y la LAN local. Corre en una Raspberry Pi como servicio de sistema.
+Lado Raspberry Pi del sistema de control remoto biometrico de un PLC Siemens S7. Este repositorio contiene el gateway que corre en la Pi, recibe comandos firmados desde la laptop por la VPN ZeroTier, valida la firma HMAC-SHA256 y abre/cierra dinamicamente el tunel hacia el PLC mediante iptables. Corresponde al lado servidor del sistema descrito en el paper LACCEI 2026.
 
-## Estructura del proyecto
+## Arquitectura
 
 ```
-zt_gateway/
-├── zt_gateway_control.py   # Script principal del servidor
-├── zt_gateway.service      # Servicio systemd (autoarranque)
-├── .env.example            # Plantilla de configuración del token
-└── README.md
+Laptop (cliente biometrico)
+      |
+      | HTTP firmado HMAC-SHA256 sobre ZeroTier
+      v
+Raspberry Pi  ->  zt_gateway_control.py  (servidor HTTP, valida ts+nonce+sig)
+                       |
+                       v
+                  iptables / sysctl  (abre o cierra NAT y FORWARD)
+                       |
+                       v
+                  PLC Siemens S7-1200/1500  (red LAN local)
 ```
 
 ## Requisitos
 
-- Python 3.10+
-- ZeroTier instalado y conectado a una red
-- Ejecutar como root (necesita `iptables` y `sysctl`)
+- Raspberry Pi con Raspberry Pi OS (o Linux equivalente)
+- Python 3.10 o superior
+- ZeroTier instalado y unido a la misma red que la laptop
+- Acceso root (necesario para `iptables` y `sysctl`)
+- PLC Siemens S7 alcanzable desde la red LAN de la Pi
 
 ```bash
 sudo apt install zerotier-one
+sudo zerotier-cli join <NETWORK_ID>
 ```
 
----
-
-## Configuración del token (clave secreta)
-
-**El token NUNCA debe subirse al repositorio.** Se guarda en un archivo local solo en la Raspberry Pi.
-
-**Paso 1** — Genera una clave segura:
-```bash
-openssl rand -hex 32
-```
-
-**Paso 2** — Guárdala en la Raspberry Pi:
-```bash
-sudo mkdir -p /etc/zt_gateway
-echo "ZT_TOKEN=pega_aqui_la_clave_generada" | sudo tee /etc/zt_gateway/token.env
-sudo chmod 600 /etc/zt_gateway/token.env
-```
-
-> El archivo `.env.example` en el repo muestra el formato exacto que debe tener ese archivo.
-
----
-
-## Autoarranque con systemd (Raspberry Pi)
-
-Para que el servicio se inicie automáticamente cada vez que se enciende la Raspberry Pi:
+## Instalacion
 
 ```bash
-# 1. Copiar el archivo de servicio
-sudo cp zt_gateway.service /etc/systemd/system/
-
-# 2. Habilitar el servicio
-sudo systemctl daemon-reload
-sudo systemctl enable zt_gateway.service
-
-# 3. Iniciarlo ahora mismo (sin reiniciar)
-sudo systemctl start zt_gateway.service
+# 1. Clonar el repo en la Raspberry Pi
+git clone https://github.com/jardelhh64e-commits/PROYECTO_BIOMETRIC_VPN_PLC_GATWAY.git
+cd PROYECTO_BIOMETRIC_VPN_PLC_GATWAY
 ```
 
-Verificar que está corriendo:
-```bash
-sudo systemctl status zt_gateway.service
-```
+## Configuracion (paso obligatorio)
 
-Ver logs en tiempo real:
-```bash
-sudo journalctl -u zt_gateway.service -f
-```
-
----
-
-## Uso manual (sin systemd)
+Las credenciales NO viven en el codigo. Se leen desde un archivo `.env` local que NUNCA se sube al repositorio.
 
 ```bash
-sudo python3 zt_gateway_control.py --token TU_CLAVE_SECRETA
+# Copiar la plantilla
+cp .env.example .env
 ```
 
-| Argumento | Default | Descripción |
+Editar `.env` y reemplazar los valores con los tuyos:
+
+| Variable  | Descripcion |
+|-----------|-------------|
+| `ZT_TOKEN` | Clave pre-compartida entre laptop y gateway. Debe ser identica a `HMAC_KEY` del repo de la laptop. Generala con `openssl rand -hex 32`. |
+| `ZT_HOST`  | IP ZeroTier de esta Raspberry Pi (ej. `10.x.x.x`). |
+| `ZT_PORT`  | Puerto HTTP del gateway. Default: `8088`. |
+
+El archivo se lee desde `/etc/zt-gateway.env` cuando corre como servicio systemd. Para mover los valores ahi:
+
+```bash
+sudo cp .env /etc/zt-gateway.env
+sudo chmod 600 /etc/zt-gateway.env
+```
+
+## Ejecutar
+
+### Modo manual (pruebas)
+
+```bash
+sudo python3 zt_gateway_control.py --token TU_CLAVE --port 8088
+```
+
+| Argumento | Default | Descripcion |
 |-----------|---------|-------------|
 | `--token` | (requerido) | Clave pre-compartida HMAC |
 | `--port`  | `8088` | Puerto HTTP |
 | `--bind`  | IP de ZeroTier | IP donde escucha el servidor |
 
----
-
-## Cómo activar / desactivar / ver estado
-
-Todos los requests necesitan firma HMAC. Los parámetros requeridos son `ts` (timestamp), `nonce` (valor único) y `sig` (firma).
-
-### Desde Python (cliente de ejemplo)
-
-```python
-import hmac, hashlib, time, uuid, requests
-
-TOKEN  = "tu_clave_secreta"
-IP     = "IP_ZEROTIER_DE_LA_RASPI"   # ej: 10.147.17.x
-PORT   = 8088
-
-def signed_request(action):
-    ts    = str(time.time())
-    nonce = uuid.uuid4().hex
-    msg   = (action + ts + nonce).encode()
-    sig   = hmac.new(TOKEN.encode(), msg, hashlib.sha256).hexdigest()
-    url   = f"http://{IP}:{PORT}/?action={action}&ts={ts}&nonce={nonce}&sig={sig}"
-    return requests.get(url).text
-
-print(signed_request("on"))      # Activa el gateway
-print(signed_request("off"))     # Desactiva el gateway
-print(signed_request("status"))  # Ver estado actual
-```
-
-### Desde curl (bash helper)
+### Modo servicio (auto-arranque en cada reboot)
 
 ```bash
-TOKEN="tu_clave_secreta"
-IP="IP_ZEROTIER_DE_LA_RASPI"
-PORT=8088
-ACTION="status"   # cambiar por: on | off | status
-
-TS=$(python3 -c "import time; print(time.time())")
-NONCE=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
-SIG=$(python3 -c "
-import hmac, hashlib
-msg = ('$ACTION' + '$TS' + '$NONCE').encode()
-print(hmac.new('$TOKEN'.encode(), msg, hashlib.sha256).hexdigest())
-")
-
-curl "http://$IP:$PORT/?action=$ACTION&ts=$TS&nonce=$NONCE&sig=$SIG"
+sudo cp zt_gateway.service /etc/systemd/system/zt-gateway.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now zt-gateway.service
 ```
 
----
+Verificar estado y ver logs en vivo:
+
+```bash
+sudo systemctl status zt-gateway
+sudo journalctl -u zt-gateway -f
+```
+
+## Comandos aceptados
+
+El gateway responde a tres acciones, todas firmadas con HMAC-SHA256 (`ts` + `nonce` + `sig`):
+
+| Accion   | Efecto |
+|----------|--------|
+| `on`     | Abre NAT + FORWARD entre ZeroTier y la LAN del PLC |
+| `off`    | Cierra NAT + FORWARD (PLC inalcanzable) |
+| `status` | Devuelve estado de `ip_forward` y reglas iptables actuales |
+
+## Modulos principales
+
+| Archivo | Rol |
+|---------|-----|
+| `zt_gateway_control.py` | Servidor HTTP, validacion HMAC, control de iptables/sysctl |
+| `zt_gateway.service`    | Unit de systemd para auto-arranque |
+| `.env.example`          | Plantilla de configuracion (token, host, puerto) |
 
 ## Seguridad
 
-- La clave nunca viaja en la URL; solo se usa para generar y verificar la firma HMAC-SHA256.
-- Cada request incluye timestamp (`ts`) y nonce único para prevenir ataques de replay.
-- La ventana de tolerancia de tiempo es ±30 segundos.
-- El archivo de token tiene permisos `600` (solo root puede leerlo).
+- El codigo NO contiene claves hardcoded. Todas viven en `.env` (ignorado por git).
+- La clave nunca viaja en la URL: solo se usa para generar y verificar la firma HMAC-SHA256.
+- Cada request incluye `ts` (timestamp) y `nonce` unico para prevenir ataques de replay.
+- Ventana de tolerancia temporal: ±30 segundos.
+- El archivo de credenciales tiene permisos `600` (solo root).
+- Ver paper LACCEI 2026 para el analisis completo del esquema.
+
+## Cliente (laptop)
+
+El codigo del cliente biometrico (reconocimiento facial, anti-spoofing y firma HMAC) vive en un repositorio aparte:
+
+`https://github.com/jardelhh64e-commits/PROYECTO_BIOMETRIC_VPN_PLC_LAPTOP`
+
+## Licencia
+
+Uso academico.
