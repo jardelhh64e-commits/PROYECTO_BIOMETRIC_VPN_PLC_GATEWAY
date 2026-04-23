@@ -102,12 +102,57 @@ El gateway responde a tres acciones, todas firmadas con HMAC-SHA256 (`ts` + `non
 | `off`    | Cierra NAT + FORWARD (PLC inalcanzable) |
 | `status` | Devuelve estado de `ip_forward` y reglas iptables actuales |
 
+## Evaluacion del consumo computacional
+
+El script `medidor_computacional_gateway.py` mide en tiempo real el consumo que impone el Gateway al hardware durante operacion sostenida (autenticacion biometrica, tunel ZeroTier y trafico HTTP firmado). Es util para evaluar la viabilidad del hardware en distintos modelos de Raspberry Pi u otras SBC equivalentes.
+
+Lo que mide:
+
+| Metrica | Fuente | Alcance |
+|---------|--------|---------|
+| CPU promedio (%)       | `/proc/stat` (diferencial entre muestras) | Uso global del sistema |
+| RAM Gateway + ZeroTier | `/proc/<pid>/status` (VmRSS agregado) | Solo los procesos del Gateway y `zerotier-one` |
+| Temperatura (C)        | `/sys/class/thermal/thermal_zone0/temp` | Sensor del SoC |
+
+Uso basico:
+
+```bash
+# Terminal 1 - log del gateway (opcional)
+sudo journalctl -u zt-gateway -f
+
+# Terminal 2 - medidor
+python3 medidor_computacional_gateway.py        # intervalo de muestreo 2s (default)
+python3 medidor_computacional_gateway.py 1      # intervalo de 1s
+
+# Durante la medicion, ejercitar el sistema desde el cliente:
+#   - autenticacion biometrica -> on (tunel arriba)
+#   - trafico sostenido (ping, peticiones HTTP firmadas)
+#   - off al terminar
+# Ctrl+C en la Terminal 2 -> imprime promedios de la ventana
+```
+
+Salida ejemplo:
+
+```
+========= RESULTADO =========
+CPU promedio (sistema) : 28.4 %
+RAM Gateway + ZeroTier : 54 MB de 7933 MB disponibles
+Temperatura oper.      : 52.6 °C
+```
+
+Notas:
+
+- La RAM total que reporta el script (`MemTotal` del kernel) es menor que la RAM fisica instalada. En una Raspberry de 8 GB el SO tipicamente ve entre 7900 y 8000 MB; el resto se reserva para GPU, firmware y estructuras del kernel. No es un error.
+- El CPU se reporta a nivel sistema (0-100 %). La carga atribuible solo al Gateway es dificil de aislar porque depende de iptables, ZeroTier y el kernel enrutando el trafico; por eso se reporta el uso global como aproximacion conservadora.
+- Para que el promedio sea representativo, mantener trafico continuo durante toda la ventana de medicion (p. ej. `ping -i 0.2`). Ventanas con mucho tiempo idle producen promedios artificialmente bajos.
+
 ## Modulos principales
 
 | Archivo | Rol |
 |---------|-----|
 | `zt_gateway_control.py` | Servidor HTTP, validacion HMAC, control de iptables/sysctl |
 | `zt_gateway.service`    | Unit de systemd para auto-arranque |
+| `medidor_computacional_gateway.py` | Medidor de consumo computacional (CPU, RAM, temperatura) |
 | `.env.example`          | Plantilla de configuracion (token, host, puerto) |
 
 ## Seguridad
