@@ -1,0 +1,14 @@
+[Unit]
+Description=ZeroTier Gateway HMAC Control
+After=network-online.target zerotierone.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/zt_gateway/token.env
+ExecStart=/usr/bin/python3 /home/jardel/zt_gateway/zt_gateway_control.py --token ${ZT_TOKEN} --port 8088
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

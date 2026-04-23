@@ -1,0 +1,20 @@
+# Secretos — nunca subir al repo
+*.env
+.env
+token.env
+*.secret
+
+# El .env.example SÍ se sube (es solo una plantilla sin datos reales)
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PDFs / documentos (la carpeta docs/ sí sube, pero sin los PDFs)
+*.pdf
+docs/*.pdf
+
+# Logs
+*.log
