@@ -9,7 +9,6 @@ zt_gateway/
 ├── zt_gateway_control.py   # Script principal del servidor
 ├── zt_gateway.service      # Servicio systemd (autoarranque)
 ├── .env.example            # Plantilla de configuración del token
-├── docs/                   # Documentación e informes (PDFs locales, no se suben)
 └── README.md
 ```
 

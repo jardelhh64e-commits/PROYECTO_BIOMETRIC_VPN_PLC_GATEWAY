@@ -12,9 +12,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# PDFs / documentos (la carpeta docs/ sí sube, pero sin los PDFs)
+# Carpeta de documentos local (no se sube)
+docs/
 *.pdf
-docs/*.pdf
 
 # Logs
 *.log
